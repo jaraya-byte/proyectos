@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { authOptions, AUTH_DISABLED } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -13,16 +13,20 @@ const clampInt = (v, min, max, def) => {
 };
 
 export async function GET() {
-  const session = await getServerSession(authOptions);
-  if (!session) return new NextResponse("No autorizado", { status: 401 });
+  if (!AUTH_DISABLED) {
+    const session = await getServerSession(authOptions);
+    if (!session) return new NextResponse("No autorizado", { status: 401 });
+  }
   const projects = await prisma.project.findMany({ orderBy: { createdAt: "asc" } });
   return NextResponse.json(projects);
 }
 
 export async function POST(req) {
-  const session = await getServerSession(authOptions);
-  if (session?.user?.role !== "admin")
-    return new NextResponse("Solo los administradores pueden crear proyectos", { status: 403 });
+  if (!AUTH_DISABLED) {
+    const session = await getServerSession(authOptions);
+    if (session?.user?.role !== "admin")
+      return new NextResponse("Solo los administradores pueden crear proyectos", { status: 403 });
+  }
 
   const b = await req.json().catch(() => ({}));
   const name = String(b.name || "").trim();

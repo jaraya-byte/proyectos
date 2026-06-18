@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { authOptions, AUTH_DISABLED } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -13,19 +13,20 @@ const clampInt = (v, min, max, def) => {
 };
 
 export async function PATCH(req, { params }) {
-  const session = await getServerSession(authOptions);
-  const role = session?.user?.role;
-  if (role !== "admin" && role !== "carga")
-    return new NextResponse("Sin permiso para editar", { status: 403 });
+  let role = "admin";
+  if (!AUTH_DISABLED) {
+    const session = await getServerSession(authOptions);
+    role = session?.user?.role;
+    if (role !== "admin" && role !== "carga")
+      return new NextResponse("Sin permiso para editar", { status: 403 });
+  }
 
   const b = await req.json().catch(() => ({}));
   const data = {};
 
-  // Avance de etapas y responsable técnico: admin y carga
   if (b.done !== undefined) data.done = clampInt(b.done, 0, 6, 0);
   if (b.tecnico !== undefined) data.tecnico = String(b.tecnico);
 
-  // Edición estructural: solo admin
   if (role === "admin") {
     if (b.plan !== undefined) data.plan = clampInt(b.plan, 1, 6, 2);
     if (b.month !== undefined) data.month = clampInt(b.month, 1, 8, 1);
@@ -46,9 +47,11 @@ export async function PATCH(req, { params }) {
 }
 
 export async function DELETE(_req, { params }) {
-  const session = await getServerSession(authOptions);
-  if (session?.user?.role !== "admin")
-    return new NextResponse("Solo los administradores pueden eliminar", { status: 403 });
+  if (!AUTH_DISABLED) {
+    const session = await getServerSession(authOptions);
+    if (session?.user?.role !== "admin")
+      return new NextResponse("Solo los administradores pueden eliminar", { status: 403 });
+  }
   try {
     await prisma.project.delete({ where: { id: params.id } });
     return new NextResponse(null, { status: 204 });

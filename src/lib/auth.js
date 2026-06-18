@@ -1,5 +1,14 @@
 import GoogleProvider from "next-auth/providers/google";
 
+// ───────────────────────────────────────────────────────────────
+// INTERRUPTOR DE ACCESO
+// Mientras no estén listas las credenciales de Google, la app queda
+// ABIERTA (todos entran como Administrador, sin iniciar sesión).
+// Cuando tengas el GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET, cambia
+// esta línea a  false  y vuelve a desplegar para exigir login.
+export const AUTH_DISABLED = true;
+// ───────────────────────────────────────────────────────────────
+
 const list = (v) =>
   (v || "")
     .split(",")
@@ -21,7 +30,7 @@ export function roleFor(email) {
 
 export function isAllowed(email) {
   if (!email) return false;
-  if (ALLOWED_DOMAINS.length === 0) return true; // sin lista => abierto (no recomendado)
+  if (ALLOWED_DOMAINS.length === 0) return true;
   return ALLOWED_DOMAINS.includes(domainOf(email));
 }
 
