@@ -1,0 +1,21 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  pillar      String                       // ingresos | eficiencia | procesos | talento
+  name        String
+  month       Int                          // 1..8 (mes de arranque)
+  plan        Int      @default(2)          // duracion planificada en meses
+  done        Int      @default(0)          // etapas completadas (0..6)
+  responsable String   @default("Sin asignar")
+  tecnico     String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
