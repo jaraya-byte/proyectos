@@ -1,4 +1,4 @@
-# Metro de Proyectos — COFERSA
+# Proyectos Sistemas Mayoreo
 
 Aplicación web para el seguimiento de proyectos por pilar estratégico, con la metáfora de un mapa de metro. Pensada para uso del equipo y de la organización: **inicio de sesión con Google Workspace restringido a los dominios corporativos**, **roles** (Administrador / Carga de datos / Visualizador) y un **único tablero compartido** respaldado por una base de datos.
 
