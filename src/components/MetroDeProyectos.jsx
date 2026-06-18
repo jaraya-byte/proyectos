@@ -10,8 +10,10 @@ import {
 
 /* ------------------------------------------------------------------ *
  *  METRO DE PROYECTOS — Centro de Control de Sistemas (COFERSA)
- *  Versión web · datos compartidos vía API (/api/projects) · rol por sesión.
- *  Pilar = Línea · Proyecto = Estación · Etapa = Parada de la línea.
+ *  Versión web · datos compartidos vía API · rol por sesión.
+ *  Línea de tiempo: cada proyecto es una BARRA de inicio→fin, apilada
+ *  en carriles para no traslaparse. Ventana visible de 6 meses.
+ *  Las fechas de inicio/fin solo las ajusta el Administrador.
  * ------------------------------------------------------------------ */
 
 const C = {
@@ -40,7 +42,7 @@ const STAGES = ["Levantamiento", "Diseño", "Desarrollo", "Pruebas", "Despliegue
 const TOTAL_STAGES = STAGES.length;
 
 const DEFAULT_PLAN = 2;
-const PLAN_OPTIONS = [1, 2, 3, 4, 5, 6];
+const MAX_PLAN = 6;
 
 /* ----------------------------- helpers ----------------------------- */
 const pct = (done) => Math.round((done / TOTAL_STAGES) * 100);
@@ -52,17 +54,33 @@ const plannedEnd = (p) => p.month + planOf(p) - 1;
 const monthsLate = (p) => (isComplete(p) ? 0 : Math.max(0, TODAY_MONTH - plannedEnd(p)));
 const isLate = (p) => monthsLate(p) > 0;
 const extraTimePct = (p) => { const pl = planOf(p); return pl > 0 ? Math.round((monthsLate(p) / pl) * 100) : 0; };
-const mapMonth = (p) => (isLate(p) ? TODAY_MONTH : clampMonth(p.month));
+
+const startVis = (p) => clampMonth(p.month);
+const endRaw = (p) => (isComplete(p) ? plannedEnd(p) : isLate(p) ? Math.max(plannedEnd(p), TODAY_MONTH) : plannedEnd(p));
+const endVis = (p) => clampMonth(endRaw(p));
+
+function packLanes(items) {
+  const sorted = [...items].sort(
+    (a, b) => startVis(a) - startVis(b) || endVis(a) - endVis(b) || a.name.localeCompare(b.name)
+  );
+  const lanes = [];
+  for (const p of sorted) {
+    const s = startVis(p), e = endVis(p);
+    const lane = lanes.find((L) => L.lastEnd < s);
+    if (lane) { lane.items.push(p); lane.lastEnd = e; }
+    else lanes.push({ items: [p], lastEnd: e });
+  }
+  return lanes;
+}
 
 const normalize = (p) => ({ plan: DEFAULT_PLAN, tecnico: "", responsable: "Sin asignar", ...p });
 
 const ROLES = {
-  admin:        { label: "Administrador", Icon: Shield, desc: "Crea, edita y elimina" },
+  admin:        { label: "Administrador", Icon: Shield, desc: "Crea, edita fechas y elimina" },
   carga:        { label: "Carga de datos", Icon: Upload, desc: "Actualiza avance y responsables" },
   visualizador: { label: "Visualizador",   Icon: Eye,    desc: "Solo lectura" },
 };
 
-/* ---- API ---- */
 async function api(path, opts = {}) {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
   if (!r.ok) throw new Error((await r.text()) || `Error ${r.status}`);
@@ -81,7 +99,7 @@ function Ring({ value, color, size = 34, stroke = 4, label }) {
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke}
           strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round" style={{ transition: "stroke-dashoffset .5s ease" }} />
       </svg>
-      <span className="absolute text-[10px] font-bold tracking-tight" style={{ color }}>{label ?? `${value}`}</span>
+      <span className="absolute font-bold tracking-tight" style={{ color, fontSize: 10 }}>{label ?? `${value}`}</span>
     </div>
   );
 }
@@ -111,20 +129,17 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
       setLoading(false);
     }
   }, []);
-
   useEffect(() => { reload(); }, [reload]);
 
   const setDone = useCallback(async (id, doneRaw) => {
     const done = Math.max(0, Math.min(TOTAL_STAGES, doneRaw));
     setProjects((ps) => ps.map((p) => (p.id === id ? { ...p, done } : p)));
-    try { await api(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify({ done }) }); }
-    catch { reload(); }
+    try { await api(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify({ done }) }); } catch { reload(); }
   }, [reload]);
 
   const updateProject = useCallback(async (id, patch) => {
     setProjects((ps) => ps.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-    try { await api(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(patch) }); }
-    catch { reload(); }
+    try { await api(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(patch) }); } catch { reload(); }
   }, [reload]);
 
   const addProject = useCallback(async (data) => {
@@ -137,8 +152,7 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
   const removeProject = useCallback(async (id) => {
     setProjects((ps) => ps.filter((p) => p.id !== id));
     setSelected(null);
-    try { await api(`/api/projects/${id}`, { method: "DELETE" }); }
-    catch { reload(); }
+    try { await api(`/api/projects/${id}`, { method: "DELETE" }); } catch { reload(); }
   }, [reload]);
 
   const filtered = useMemo(() => projects.filter((p) => {
@@ -168,6 +182,7 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
   }, [projects]);
 
   const selProject = projects.find((p) => p.id === selected) || null;
+  const todayLeft = ((TODAY_MONTH - 1) / COLS) * 100;
 
   return (
     <div className="min-h-screen w-full" style={{ background: C.page, color: C.ink, colorScheme: "light", fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}>
@@ -183,21 +198,19 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
         .mp-scroll::-webkit-scrollbar-thumb{background:#cdd5e1;border-radius:8px}
       `}</style>
 
-      {/* ---------------- Header ---------------- */}
+      {/* Header */}
       <header className="sticky top-0 z-20 border-b" style={{ borderColor: C.border, background: "rgba(255,255,255,.88)", backdropFilter: "blur(8px)" }}>
-        <div className="max-w-[1240px] mx-auto px-5 py-3 flex items-center gap-4 flex-wrap">
+        <div className="mx-auto px-5 py-3 flex items-center gap-4 flex-wrap" style={{ maxWidth: 1240 }}>
           <div className="flex items-center gap-3">
             <div className="grid place-items-center w-10 h-10 rounded-xl" style={{ background: "linear-gradient(135deg,#059669,#2563EB)" }}>
               <Train size={20} className="text-white" />
             </div>
             <div>
-              <div className="text-[11px] uppercase tracking-[.22em] leading-none" style={{ color: C.faint }}>Centro de Control · COFERSA</div>
+              <div className="uppercase leading-none" style={{ color: C.faint, fontSize: 11, letterSpacing: ".22em" }}>Centro de Control · COFERSA</div>
               <div className="text-lg font-bold tracking-tight leading-tight" style={{ color: C.ink }}>Metro de Proyectos</div>
             </div>
           </div>
-
           <div className="flex-1" />
-
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl" style={{ background: "#EEF1F6" }}>
               <span className="grid place-items-center w-6 h-6 rounded-full" style={{ background: "#FFFFFF", color: C.ink }}>
@@ -205,7 +218,7 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
               </span>
               <div className="leading-tight pr-1">
                 <div className="text-xs font-semibold" style={{ color: C.ink }}>{user.name || user.email || "Usuario"}</div>
-                <div className="text-[10px] uppercase tracking-[.12em]" style={{ color: C.faint }}>{roleMeta.label}</div>
+                <div className="uppercase" style={{ color: C.faint, fontSize: 10, letterSpacing: ".12em" }}>{roleMeta.label}</div>
               </div>
             </div>
             <button onClick={() => signOut({ callbackUrl: "/login" })} title="Cerrar sesión"
@@ -216,7 +229,7 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
         </div>
       </header>
 
-      <main className="max-w-[1240px] mx-auto px-5 py-6">
+      <main className="mx-auto px-5 py-6" style={{ maxWidth: 1240 }}>
         {loading ? (
           <div className="grid place-items-center py-24" style={{ color: C.faint }}>
             <Loader2 size={28} className="mp-spin" />
@@ -230,7 +243,7 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
           </div>
         ) : (
           <>
-            {/* ---------------- KPI ---------------- */}
+            {/* KPIs */}
             <section className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
               <Kpi label="Avance global" value={`${kpi.avance}%`} accent="#2563EB" big />
               <Kpi label="Activos" value={kpi.activos} />
@@ -240,9 +253,9 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
               <Kpi label="Culminados" value={kpi.completados} accent={C.done} />
             </section>
 
-            {/* ---------------- Toolbar ---------------- */}
+            {/* Toolbar */}
             <div className="flex items-center gap-3 mb-5 flex-wrap">
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl flex-1 min-w-[200px]" style={{ background: "#FFFFFF", border: `1px solid ${C.border}` }}>
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl flex-1" style={{ background: "#FFFFFF", border: `1px solid ${C.border}`, minWidth: 200 }}>
                 <Search size={15} style={{ color: C.faint }} />
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar proyecto…"
                   className="bg-transparent outline-none text-sm w-full" style={{ color: C.ink }} />
@@ -250,9 +263,7 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
               <div className="flex items-center gap-1 rounded-xl p-1" style={{ background: "#EEF1F6" }}>
                 <FilterChip active={pillarFilter === "todos"} onClick={() => setPillarFilter("todos")} color={C.faint}>Todas</FilterChip>
                 {PILLAR_ORDER.map((k) => (
-                  <FilterChip key={k} active={pillarFilter === k} onClick={() => setPillarFilter(k)} color={PILLARS[k].color}>
-                    {PILLARS[k].label}
-                  </FilterChip>
+                  <FilterChip key={k} active={pillarFilter === k} onClick={() => setPillarFilter(k)} color={PILLARS[k].color}>{PILLARS[k].label}</FilterChip>
                 ))}
               </div>
               {canManage && (
@@ -262,15 +273,15 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
               )}
             </div>
 
-            {/* ---------------- Metro map ---------------- */}
+            {/* Timeline */}
             <section className="rounded-2xl overflow-hidden" style={{ background: "#FFFFFF", border: `1px solid ${C.border}`, boxShadow: "0 1px 3px rgba(16,24,40,.04)" }}>
               <div className="flex border-b" style={{ borderColor: C.border, background: C.panel }}>
-                <div className="w-[200px] shrink-0 px-4 py-3 text-[10px] uppercase tracking-[.18em]" style={{ color: C.faint }}>Línea / Pilar</div>
-                <div className="flex-1 grid grid-cols-6">
+                <div className="shrink-0 px-4 py-3 uppercase" style={{ width: 200, color: C.faint, fontSize: 10, letterSpacing: ".18em" }}>Línea / Pilar</div>
+                <div className="flex-1 grid" style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)` }}>
                   {SCALE.map((m, i) => (
-                    <div key={m} className="px-2 py-3 text-center text-[11px] uppercase tracking-[.12em]"
-                      style={{ borderLeft: `1px dashed ${C.border}`, color: i + 1 === TODAY_MONTH ? C.ink : C.muted, fontWeight: i + 1 === TODAY_MONTH ? 700 : 500 }}>
-                      {m}{i + 1 === TODAY_MONTH && <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full align-middle" style={{ background: C.risk }} />}
+                    <div key={m} className="px-2 py-3 text-center uppercase"
+                      style={{ borderLeft: `1px dashed ${C.border}`, color: i + 1 === TODAY_MONTH ? C.ink : C.muted, fontWeight: i + 1 === TODAY_MONTH ? 700 : 500, fontSize: 11, letterSpacing: ".12em" }}>
+                      {m}{i + 1 === TODAY_MONTH && <span className="ml-1 inline-block rounded-full align-middle" style={{ width: 6, height: 6, background: C.risk }} />}
                     </div>
                   ))}
                 </div>
@@ -278,49 +289,59 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
 
               {PILLAR_ORDER.map((pk) => {
                 const meta = PILLARS[pk];
-                const inLine = filtered.filter((p) => p.pillar === pk && !isComplete(p));
+                const active = filtered.filter((p) => p.pillar === pk && !isComplete(p));
+                const lanes = packLanes(active);
                 const allInLine = projects.filter((p) => p.pillar === pk);
                 const lineAvance = allInLine.length ? Math.round(allInLine.reduce((a, p) => a + pct(p.done), 0) / allInLine.length) : 0;
                 return (
                   <div key={pk} className="flex items-stretch border-b last:border-b-0" style={{ borderColor: C.border }}>
-                    <div className="w-[200px] shrink-0 px-4 py-4 flex items-center gap-3" style={{ background: C.panel }}>
+                    <div className="shrink-0 px-4 py-4 flex items-center gap-3" style={{ width: 200, background: C.panel }}>
                       <span className="grid place-items-center w-9 h-9 rounded-lg shrink-0" style={{ background: meta.soft, color: meta.color }}>
                         <meta.Icon size={18} />
                       </span>
                       <div className="min-w-0">
                         <div className="text-sm font-bold truncate" style={{ color: C.ink }}>{meta.label}</div>
-                        <div className="text-[10px] uppercase tracking-[.12em] truncate" style={{ color: C.faint }}>{meta.line}</div>
+                        <div className="uppercase truncate" style={{ color: C.faint, fontSize: 10, letterSpacing: ".12em" }}>{meta.line}</div>
                       </div>
                       <div className="ml-auto"><Ring value={lineAvance} color={meta.color} label={`${lineAvance}%`} size={38} /></div>
                     </div>
 
-                    <div className="flex-1 relative">
-                      <div className="absolute left-0 right-0 top-[16px] h-[3px] rounded-full" style={{ background: meta.color, opacity: .7 }} />
-                      <div className="grid grid-cols-6 min-h-[132px]">
-                        {SCALE.map((_, mi) => {
-                          const here = inLine.filter((p) => mapMonth(p) === mi + 1);
-                          return (
-                            <div key={mi} className="px-2 pt-7 pb-3 flex flex-col gap-2" style={{ borderLeft: `1px dashed ${C.border}` }}>
-                              {here.map((p) => (
-                                <StationChip key={p.id} project={p} meta={meta} onClick={() => setSelected(p.id)} />
-                              ))}
-                            </div>
-                          );
-                        })}
+                    <div className="flex-1 relative" style={{ minHeight: 78 }}>
+                      <div className="absolute inset-0 grid pointer-events-none" style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)` }}>
+                        {SCALE.map((_, i) => (<div key={i} style={{ borderLeft: i ? `1px dashed ${C.border}` : "none" }} />))}
                       </div>
+                      <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: `${todayLeft}%`, borderLeft: `2px dashed ${C.risk}`, opacity: .35 }} />
+
+                      {lanes.length === 0 ? (
+                        <div className="relative px-2 py-5" style={{ color: C.faint, fontSize: 11 }}>Sin proyectos activos en la ventana.</div>
+                      ) : (
+                        <div className="relative flex flex-col gap-1.5 py-3">
+                          {lanes.map((lane, li) => (
+                            <div key={li} className="grid" style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)` }}>
+                              {lane.items.map((p) => {
+                                const s = startVis(p), e = endVis(p);
+                                return (
+                                  <GanttBar key={p.id} project={p} meta={meta}
+                                    gridColumn={`${s} / span ${e - s + 1}`} onClick={() => setSelected(p.id)} />
+                                );
+                              })}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
               })}
             </section>
 
-            <p className="text-[11px] mt-4 leading-relaxed" style={{ color: C.muted }}>
-              Cada <strong>línea</strong> es un pilar estratégico y cada <strong>estación</strong> un proyecto, ubicado en su mes de arranque.
-              Si un proyecto pasa su cierre previsto sin culminar, se marca <span style={{ color: C.risk }}>atrasado</span> <Clock size={11} className="inline" />, se estira hasta el mes actual y suma su <strong>% de tiempo extra</strong>.
-              Al llegar a la etapa de Cierre, el proyecto pasa al <strong>histórico</strong> de abajo.
+            <p className="mt-4 leading-relaxed" style={{ color: C.muted, fontSize: 11 }}>
+              Cada barra es un proyecto y se extiende desde su <strong>mes de inicio</strong> hasta su <strong>mes de fin</strong>; las barras se apilan en carriles para no traslaparse.
+              La línea roja punteada marca el mes actual. Si un proyecto pasa su fin sin culminar, su barra se vuelve <span style={{ color: C.risk }}>roja</span> y se estira hasta hoy, sumando su <strong>% de tiempo extra</strong>.
+              Al llegar a la etapa de Cierre, el proyecto sale del lienzo y pasa al <strong>histórico</strong>.
             </p>
 
-            {/* ---------------- Histórico ---------------- */}
+            {/* Histórico */}
             <section className="mt-7 rounded-2xl overflow-hidden" style={{ background: "#FFFFFF", border: `1px solid ${C.border}`, boxShadow: "0 1px 3px rgba(16,24,40,.04)" }}>
               <div className="flex items-center gap-2.5 px-5 py-3.5 border-b" style={{ borderColor: C.border, background: C.panel }}>
                 <span className="grid place-items-center w-8 h-8 rounded-lg" style={{ background: "#FFFFFF", color: C.done, border: `1px solid ${C.done}33` }}>
@@ -328,16 +349,15 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
                 </span>
                 <div>
                   <div className="text-sm font-bold tracking-tight" style={{ color: C.ink }}>Histórico de proyectos culminados</div>
-                  <div className="text-[10px] uppercase tracking-[.14em]" style={{ color: C.faint }}>Consulta permanente · solo lectura</div>
+                  <div className="uppercase" style={{ color: C.faint, fontSize: 10, letterSpacing: ".14em" }}>Consulta permanente · solo lectura</div>
                 </div>
                 <span className="ml-auto text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: C.done + "14", color: C.done }}>
                   {historico.length} {historico.length === 1 ? "proyecto" : "proyectos"}
                 </span>
               </div>
-
               {historico.length === 0 ? (
                 <div className="px-5 py-8 text-center text-sm" style={{ color: C.faint }}>
-                  Aún no hay proyectos culminados. Cuando un proyecto llegue a la etapa <strong style={{ color: C.muted }}>Cierre</strong>, aparecerá aquí.
+                  Aún no hay proyectos culminados. Cuando uno llegue a la etapa <strong style={{ color: C.muted }}>Cierre</strong>, aparecerá aquí.
                 </div>
               ) : (
                 <ul className="divide-y" style={{ borderColor: C.border }}>
@@ -345,25 +365,25 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
                     const meta = PILLARS[p.pillar];
                     return (
                       <li key={p.id}>
-                        <button onClick={() => setSelected(p.id)}
-                          className="w-full flex items-center gap-3 px-5 py-3 text-left transition hover:bg-[color:var(--hv)]"
-                          style={{ "--hv": meta.soft }}>
+                        <button onClick={() => setSelected(p.id)} className="w-full flex items-center gap-3 px-5 py-3 text-left transition"
+                          style={{ background: "transparent" }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = meta.soft)}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
                           <span className="grid place-items-center w-7 h-7 rounded-full shrink-0" style={{ background: C.done }}>
                             <Check size={13} className="text-white" strokeWidth={3.5} />
                           </span>
-                          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: meta.color }} />
+                          <span className="rounded-full shrink-0" style={{ width: 8, height: 8, background: meta.color }} />
                           <div className="min-w-0 flex-1">
                             <div className="text-sm font-semibold truncate" style={{ color: C.ink }}>{p.name}</div>
-                            <div className="text-[11px] truncate" style={{ color: C.muted }}>
-                              {meta.label} · {p.responsable}
-                              {p.tecnico ? <> · <UserCog size={10} className="inline -mt-0.5" /> {p.tecnico}</> : null}
+                            <div className="truncate" style={{ color: C.muted, fontSize: 11 }}>
+                              {meta.label} · {p.responsable}{p.tecnico ? <> · <UserCog size={10} className="inline" style={{ marginTop: -2 }} /> {p.tecnico}</> : null}
                             </div>
                           </div>
                           <div className="hidden sm:block text-right shrink-0">
-                            <div className="text-[10px] uppercase tracking-[.12em]" style={{ color: C.faint }}>Arranque</div>
-                            <div className="text-xs font-semibold" style={{ color: C.muted }}>{monthName(p.month)}</div>
+                            <div className="uppercase" style={{ color: C.faint, fontSize: 10, letterSpacing: ".12em" }}>Periodo</div>
+                            <div className="text-xs font-semibold" style={{ color: C.muted }}>{monthName(p.month)}–{monthName(plannedEnd(p))}</div>
                           </div>
-                          <span className="text-[11px] font-bold px-2 py-1 rounded-md shrink-0" style={{ background: C.done + "14", color: C.done }}>Culminado</span>
+                          <span className="font-bold px-2 py-1 rounded-md shrink-0" style={{ background: C.done + "14", color: C.done, fontSize: 11 }}>Culminado</span>
                         </button>
                       </li>
                     );
@@ -391,11 +411,11 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
 function Kpi({ label, value, accent = C.muted, big, warn, sub }) {
   return (
     <div className="rounded-2xl px-4 py-3.5" style={{ background: warn ? C.riskBg : "#FFFFFF", border: `1px solid ${warn ? accent + "55" : C.border}` }}>
-      <div className="text-[10px] uppercase tracking-[.16em] mb-1.5 flex items-center gap-1" style={{ color: C.faint }}>
+      <div className="uppercase mb-1.5 flex items-center gap-1" style={{ color: C.faint, fontSize: 10, letterSpacing: ".16em" }}>
         {warn && <AlertTriangle size={11} style={{ color: accent }} />}{label}
       </div>
-      <div className={`font-bold tracking-tight ${big ? "text-3xl" : "text-2xl"}`} style={{ color: accent === C.muted ? C.ink : accent }}>{value}</div>
-      {sub && <div className="text-[10px] mt-0.5 font-semibold" style={{ color: warn ? accent : C.faint }}>{sub}</div>}
+      <div className="font-bold tracking-tight" style={{ color: accent === C.muted ? C.ink : accent, fontSize: big ? 30 : 24 }}>{value}</div>
+      {sub && <div className="mt-0.5 font-semibold" style={{ color: warn ? accent : C.faint, fontSize: 10 }}>{sub}</div>}
     </div>
   );
 }
@@ -404,47 +424,38 @@ function FilterChip({ active, onClick, color, children }) {
   return (
     <button onClick={onClick} className="px-2.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5"
       style={active ? { background: "#FFFFFF", color: C.ink, boxShadow: "0 1px 2px rgba(16,24,40,.1)" } : { color: C.muted }}>
-      <span className="w-2 h-2 rounded-full" style={{ background: color }} />{children}
+      <span className="rounded-full" style={{ width: 8, height: 8, background: color }} />{children}
     </button>
   );
 }
 
-function StationChip({ project, meta, onClick }) {
+function GanttBar({ project, meta, gridColumn, onClick }) {
   const p = pct(project.done);
-  const complete = isComplete(project);
   const late = isLate(project);
   const extra = extraTimePct(project);
   const lateM = monthsLate(project);
-  const beyond = isBeyond(project.month);
-  const pulse = !complete && project.done > 0;
+  const beyond = isBeyond(project.month) || endRaw(project) > COLS;
+  const pulse = project.done > 0 && !isComplete(project);
   return (
     <button onClick={onClick}
-      title={`${project.name} · ${project.responsable}${project.tecnico ? ` · Téc: ${project.tecnico}` : ""}${late ? ` · Atrasado ${lateM} mes(es) desde ${monthName(plannedEnd(project))} (+${extra}% tiempo)` : ""}${beyond ? ` · ${monthName(project.month)} (anclado al extremo)` : ""}`}
-      className="relative z-10 w-full flex items-center gap-2.5 rounded-lg pl-2.5 pr-2.5 py-1.5 text-left transition hover:-translate-y-px"
-      style={{ background: "#FFFFFF", border: `1px solid ${late ? "#FCA5A5" : C.border}`, borderLeft: `3px solid ${meta.color}`, boxShadow: "0 1px 2px rgba(16,24,40,.06)" }}>
-      <span className={`relative grid place-items-center rounded-full shrink-0${pulse ? " mp-pulse" : ""}`}
-        style={{ width: 16, height: 16, background: complete ? meta.color : "#FFFFFF", border: `3px solid ${late ? C.risk : project.done > 0 ? meta.color : C.borderStrong}`, "--c": meta.color + "55" }}>
-        {complete && <Check size={9} className="text-white" strokeWidth={4} />}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1">
-          <span className="text-[11px] font-semibold leading-tight truncate" style={{ color: C.ink }}>{project.name}</span>
-          {late && <Clock size={11} className="shrink-0" style={{ color: C.risk }} />}
-          {beyond && <ChevronsRight size={12} className="shrink-0" style={{ color: meta.color }} />}
-        </div>
-        <div className="flex items-center gap-1.5 mt-1">
-          <div className="h-1 rounded-full overflow-hidden flex-1" style={{ background: "#EEF1F6" }}>
-            <div className="h-full rounded-full" style={{ width: `${p}%`, background: late ? C.risk : meta.color }} />
-          </div>
-          <span className="text-[9px] font-semibold shrink-0 tabular-nums" style={{ color: late ? C.risk : C.muted }}>
-            {late ? `+${extra}%` : `${p}%`}
-          </span>
-        </div>
-        {late && (
-          <div className="text-[9px] font-semibold mt-0.5 flex items-center gap-1" style={{ color: C.risk }}>
-            <Clock size={9} /> Atrasado {lateM} {lateM === 1 ? "mes" : "meses"}
-          </div>
-        )}
+      title={`${project.name} · ${monthName(project.month)}–${monthName(plannedEnd(project))} · ${project.responsable}${project.tecnico ? ` · Téc: ${project.tecnico}` : ""}${late ? ` · Atrasado ${lateM} mes(es), +${extra}% tiempo` : ""}`}
+      className={`relative overflow-hidden text-left transition${pulse ? " mp-pulse" : ""}`}
+      style={{
+        gridColumn, height: 34, marginRight: 3, borderRadius: 8,
+        background: late ? C.riskBg : "#FFFFFF",
+        border: `1px solid ${late ? "#FCA5A5" : C.border}`,
+        borderLeft: `3px solid ${late ? C.risk : meta.color}`,
+        "--c": meta.color + "55",
+      }}>
+      <div className="absolute inset-y-0 left-0" style={{ width: `${p}%`, background: late ? C.risk : meta.color, opacity: .14 }} />
+      <div className="relative h-full flex items-center gap-1 px-2">
+        {isComplete(project) && <Check size={11} style={{ color: meta.color }} strokeWidth={3} />}
+        <span className="font-semibold truncate" style={{ color: C.ink, fontSize: 11 }}>{project.name}</span>
+        {late && <Clock size={11} className="shrink-0" style={{ color: C.risk }} />}
+        {beyond && <ChevronsRight size={12} className="shrink-0" style={{ color: meta.color }} />}
+        <span className="ml-auto font-semibold tabular-nums shrink-0" style={{ color: late ? C.risk : C.muted, fontSize: 9 }}>
+          {late ? `+${extra}%` : `${p}%`}
+        </span>
       </div>
     </button>
   );
@@ -457,37 +468,40 @@ function ProjectDetail({ project, meta, canEdit, canManage, onClose, onSetDone, 
   const late = isLate(project);
   const extra = extraTimePct(project);
   const lateM = monthsLate(project);
-  const beyond = isBeyond(project.month);
+  const end = plannedEnd(project);
+  const beyond = isBeyond(project.month) || end > COLS;
+
+  const setStart = (ns) => onUpdate({ month: ns, plan: Math.max(1, Math.min(MAX_PLAN, end - ns + 1)) });
+  const setEnd = (ne) => onUpdate({ plan: Math.max(1, Math.min(MAX_PLAN, ne - project.month + 1)) });
+  const selStyle = { background: "#FFFFFF", border: `1px solid ${C.borderStrong}`, color: C.ink, colorScheme: "light", borderRadius: 6, padding: "2px 6px", fontSize: 12 };
+
   return (
     <div className="fixed inset-0 z-40 flex items-end md:items-center justify-center p-0 md:p-6" style={{ background: "rgba(17,22,30,.45)" }} onClick={onClose}>
-      <div className="w-full md:max-w-3xl rounded-t-2xl md:rounded-2xl overflow-hidden max-h-[92vh] flex flex-col" style={{ background: "#FFFFFF", border: `1px solid ${C.border}`, boxShadow: "0 20px 60px rgba(16,24,40,.25)" }} onClick={(e) => e.stopPropagation()}>
+      <div className="w-full rounded-t-2xl md:rounded-2xl overflow-hidden flex flex-col" style={{ maxWidth: 768, maxHeight: "92vh", background: "#FFFFFF", border: `1px solid ${C.border}`, boxShadow: "0 20px 60px rgba(16,24,40,.25)" }} onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-5 flex items-start gap-4" style={{ background: `linear-gradient(180deg, ${meta.soft}, transparent)` }}>
           <span className="grid place-items-center w-11 h-11 rounded-xl shrink-0" style={{ background: "#FFFFFF", color: meta.color, border: `1px solid ${meta.color}33` }}>
             <meta.Icon size={20} />
           </span>
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[.16em]" style={{ color: meta.color }}>
-              {meta.line}<ChevronRight size={11} />{monthName(project.month)}
+            <div className="flex items-center gap-1.5 uppercase" style={{ color: meta.color, fontSize: 10, letterSpacing: ".16em" }}>
+              {meta.line}<ChevronRight size={11} />{monthName(project.month)}–{monthName(end)}
               {beyond && <span className="inline-flex items-center gap-0.5 ml-1 px-1.5 py-0.5 rounded" style={{ background: meta.soft, color: meta.color }}><ChevronsRight size={10} /> extremo</span>}
             </div>
             <h2 className="text-xl font-bold tracking-tight leading-tight mt-0.5" style={{ color: C.ink }}>{project.name}</h2>
             <div className="text-xs mt-1" style={{ color: C.muted }}>
-              Equipo: <span style={{ color: C.ink }}>{project.responsable}</span> ·{" "}
-              <span style={{ color: complete ? C.done : late ? C.risk : "#D97706" }}>{late ? "Atrasado" : statusOf(done)}</span>
+              Equipo: <span style={{ color: C.ink }}>{project.responsable}</span> · <span style={{ color: complete ? C.done : late ? C.risk : "#D97706" }}>{late ? "Atrasado" : statusOf(done)}</span>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <Ring value={p} color={late ? C.risk : meta.color} label={`${p}%`} size={46} stroke={5} />
-            <button onClick={onClose} className="grid place-items-center w-9 h-9 rounded-lg" style={{ background: C.panel, color: C.muted }}>
-              <X size={17} />
-            </button>
+            <button onClick={onClose} className="grid place-items-center w-9 h-9 rounded-lg" style={{ background: C.panel, color: C.muted }}><X size={17} /></button>
           </div>
         </div>
 
         <div className="px-6 py-5 overflow-y-auto mp-scroll">
           <div className="grid sm:grid-cols-2 gap-3 mb-6">
             <div className="rounded-xl p-3.5" style={{ background: C.panel, border: `1px solid ${C.border}` }}>
-              <div className="text-[10px] uppercase tracking-[.16em] mb-1.5 flex items-center gap-1.5" style={{ color: C.faint }}>
+              <div className="uppercase mb-1.5 flex items-center gap-1.5" style={{ color: C.faint, fontSize: 10, letterSpacing: ".16em" }}>
                 <UserCog size={12} /> Responsable técnico
               </div>
               {canEdit ? (
@@ -499,64 +513,62 @@ function ProjectDetail({ project, meta, canEdit, canManage, onClose, onSetDone, 
             </div>
 
             <div className="rounded-xl p-3.5" style={{ background: late ? C.riskBg : C.panel, border: `1px solid ${late ? "#FCA5A5" : C.border}` }}>
-              <div className="text-[10px] uppercase tracking-[.16em] mb-1.5 flex items-center gap-1.5" style={{ color: C.faint }}>
-                <Clock size={12} /> Programa
+              <div className="uppercase mb-2 flex items-center gap-1.5" style={{ color: C.faint, fontSize: 10, letterSpacing: ".16em" }}>
+                <Clock size={12} /> Fechas {canManage ? "" : "(solo admin edita)"}
               </div>
-              <div className="text-xs leading-relaxed" style={{ color: C.muted }}>
-                Arranque <span style={{ color: C.ink, fontWeight: 600 }}>{monthName(project.month)}</span> ·{" "}
-                {canManage ? (
-                  <>Duración{" "}
-                    <select value={planOf(project)} onChange={(e) => onUpdate({ plan: +e.target.value })}
-                      className="rounded-md px-1.5 py-0.5 text-xs outline-none align-middle" style={{ background: "#FFFFFF", border: `1px solid ${C.borderStrong}`, color: C.ink, colorScheme: "light" }}>
-                      {PLAN_OPTIONS.map((m) => <option key={m} value={m}>{m} mes{m > 1 ? "es" : ""}</option>)}
-                    </select>
-                  </>
-                ) : (
-                  <>Duración <span style={{ color: C.ink, fontWeight: 600 }}>{planOf(project)} mes{planOf(project) > 1 ? "es" : ""}</span></>
-                )}
-              </div>
-              <div className="text-xs mt-1" style={{ color: C.muted }}>
-                Cierre previsto: <span style={{ color: C.ink, fontWeight: 600 }}>{monthName(plannedEnd(project))}</span>
-              </div>
+              {canManage ? (
+                <div className="flex items-center gap-2 flex-wrap text-xs" style={{ color: C.muted }}>
+                  <span>Inicio</span>
+                  <select value={project.month} onChange={(e) => setStart(+e.target.value)} style={selStyle}>
+                    {MONTH_NAMES.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                  </select>
+                  <span>Fin</span>
+                  <select value={end} onChange={(e) => setEnd(+e.target.value)} style={selStyle}>
+                    {MONTH_NAMES.map((m, i) => <option key={m} value={i + 1} disabled={i + 1 < project.month}>{m}</option>)}
+                  </select>
+                </div>
+              ) : (
+                <div className="text-xs" style={{ color: C.muted }}>
+                  Inicio <span style={{ color: C.ink, fontWeight: 600 }}>{monthName(project.month)}</span> · Fin <span style={{ color: C.ink, fontWeight: 600 }}>{monthName(end)}</span>
+                </div>
+              )}
               {late ? (
-                <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-1 rounded-md" style={{ background: "#FFFFFF", color: C.risk, border: "1px solid #FCA5A5" }}>
+                <div className="mt-2 inline-flex items-center gap-1.5 font-bold px-2 py-1 rounded-md" style={{ background: "#FFFFFF", color: C.risk, border: "1px solid #FCA5A5", fontSize: 11 }}>
                   <AlertTriangle size={11} /> Atrasado {lateM} {lateM === 1 ? "mes" : "meses"} · +{extra}% de tiempo extra
                 </div>
               ) : complete ? (
-                <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-1 rounded-md" style={{ background: "#FFFFFF", color: C.done, border: `1px solid ${C.done}55` }}>
+                <div className="mt-2 inline-flex items-center gap-1.5 font-bold px-2 py-1 rounded-md" style={{ background: "#FFFFFF", color: C.done, border: `1px solid ${C.done}55`, fontSize: 11 }}>
                   <Check size={11} strokeWidth={3} /> Culminado en plazo
                 </div>
               ) : (
-                <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-1 rounded-md" style={{ background: "#FFFFFF", color: C.done, border: `1px solid ${C.border}` }}>
+                <div className="mt-2 inline-flex items-center gap-1.5 font-semibold px-2 py-1 rounded-md" style={{ background: "#FFFFFF", color: C.done, border: `1px solid ${C.border}`, fontSize: 11 }}>
                   <Check size={11} strokeWidth={3} /> En programa
                 </div>
               )}
             </div>
           </div>
 
-          <div className="text-[10px] uppercase tracking-[.18em] mb-5" style={{ color: C.faint }}>Recorrido de etapas</div>
+          <div className="uppercase mb-5" style={{ color: C.faint, fontSize: 10, letterSpacing: ".18em" }}>Recorrido de etapas</div>
           <div className="overflow-x-auto mp-scroll pb-2">
-            <div className="flex items-start min-w-[620px]">
+            <div className="flex items-start" style={{ minWidth: 620 }}>
               {STAGES.map((s, i) => {
                 const stDone = i < done;
                 const isCurrent = i === done && done < TOTAL_STAGES;
                 const reached = i <= done;
                 return (
                   <div key={s} className="flex-1 flex flex-col items-center relative">
-                    {i < STAGES.length - 1 && (
-                      <div className="absolute top-[14px] left-1/2 w-full h-[3px]" style={{ background: i < done ? meta.color : C.track }} />
-                    )}
+                    {i < STAGES.length - 1 && (<div className="absolute" style={{ top: 14, left: "50%", width: "100%", height: 3, background: i < done ? meta.color : C.track }} />)}
                     <button disabled={!canEdit} onClick={() => onSetDone(i + 1)}
                       className={`relative grid place-items-center rounded-full z-10 transition${isCurrent ? " mp-pulse" : ""}`}
                       style={{ width: 30, height: 30, background: stDone ? meta.color : "#FFFFFF", border: `3px solid ${reached || isCurrent ? meta.color : C.borderStrong}`, cursor: canEdit ? "pointer" : "default", "--c": meta.color + "55" }}
                       title={canEdit ? `Marcar avance hasta: ${s}` : s}>
                       {stDone ? <Check size={14} className="text-white" strokeWidth={3.5} />
-                        : isCurrent ? <span className="w-2 h-2 rounded-full" style={{ background: meta.color }} />
+                        : isCurrent ? <span className="rounded-full" style={{ width: 8, height: 8, background: meta.color }} />
                         : <Circle size={9} style={{ color: C.borderStrong }} />}
                     </button>
                     <div className="mt-3 text-center px-1">
-                      <div className="text-[11px] font-semibold leading-tight" style={{ color: reached || isCurrent ? C.ink : C.faint }}>{s}</div>
-                      <div className="text-[9px] uppercase tracking-wide mt-0.5 font-semibold" style={{ color: isCurrent ? meta.color : stDone ? C.done : C.faint }}>
+                      <div className="font-semibold leading-tight" style={{ color: reached || isCurrent ? C.ink : C.faint, fontSize: 11 }}>{s}</div>
+                      <div className="uppercase mt-0.5 font-semibold" style={{ color: isCurrent ? meta.color : stDone ? C.done : C.faint, fontSize: 9 }}>
                         {stDone ? "Completa" : isCurrent ? "En curso" : "Pendiente"}
                       </div>
                     </div>
@@ -569,18 +581,11 @@ function ProjectDetail({ project, meta, canEdit, canManage, onClose, onSetDone, 
           <div className="flex items-center justify-between mt-6 pt-5 border-t flex-wrap gap-3" style={{ borderColor: C.border }}>
             {canEdit ? (
               <div className="flex items-center gap-2">
-                <button onClick={() => onSetDone(done - 1)} disabled={done <= 0}
-                  className="px-3.5 py-2 rounded-lg text-xs font-semibold disabled:opacity-30" style={{ background: "#FFFFFF", border: `1px solid ${C.borderStrong}`, color: C.ink }}>
-                  ← Retroceder
-                </button>
-                <button onClick={() => onSetDone(done + 1)} disabled={done >= TOTAL_STAGES}
-                  className="px-3.5 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-30" style={{ background: meta.color }}>
-                  Avanzar etapa →
-                </button>
-                <span className="text-[11px] ml-1" style={{ color: C.faint }}>o da clic en una estación</span>
+                <button onClick={() => onSetDone(done - 1)} disabled={done <= 0} className="px-3.5 py-2 rounded-lg text-xs font-semibold disabled:opacity-30" style={{ background: "#FFFFFF", border: `1px solid ${C.borderStrong}`, color: C.ink }}>← Retroceder</button>
+                <button onClick={() => onSetDone(done + 1)} disabled={done >= TOTAL_STAGES} className="px-3.5 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-30" style={{ background: meta.color }}>Avanzar etapa →</button>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5 text-[11px]" style={{ color: C.muted }}><Eye size={13} /> Modo solo lectura</div>
+              <div className="flex items-center gap-1.5" style={{ color: C.muted, fontSize: 11 }}><Eye size={13} /> Modo solo lectura</div>
             )}
             {canManage && (
               <button onClick={onDelete} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold" style={{ color: C.risk, background: C.riskBg, border: "1px solid #FCA5A5" }}>
@@ -597,15 +602,17 @@ function ProjectDetail({ project, meta, canEdit, canManage, onClose, onSetDone, 
 function AddProject({ onClose, onAdd }) {
   const [name, setName] = useState("");
   const [pillar, setPillar] = useState("ingresos");
-  const [month, setMonth] = useState(1);
-  const [plan, setPlan] = useState(DEFAULT_PLAN);
+  const [start, setStart] = useState(TODAY_MONTH);
+  const [end, setEnd] = useState(TODAY_MONTH + 1);
   const [responsable, setResponsable] = useState("");
   const [tecnico, setTecnico] = useState("");
   const ok = name.trim().length > 1;
-  const previewEnd = month + plan - 1;
+  const plan = Math.max(1, Math.min(MAX_PLAN, end - start + 1));
+  const selStyle = { background: "#FFFFFF", border: `1px solid ${C.borderStrong}`, color: C.ink, colorScheme: "light" };
+
   return (
     <div className="fixed inset-0 z-40 grid place-items-center p-4" style={{ background: "rgba(17,22,30,.45)" }} onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl overflow-hidden max-h-[92vh] flex flex-col" style={{ background: "#FFFFFF", border: `1px solid ${C.border}`, boxShadow: "0 20px 60px rgba(16,24,40,.25)" }} onClick={(e) => e.stopPropagation()}>
+      <div className="w-full overflow-hidden flex flex-col rounded-2xl" style={{ maxWidth: 448, maxHeight: "92vh", background: "#FFFFFF", border: `1px solid ${C.border}`, boxShadow: "0 20px 60px rgba(16,24,40,.25)" }} onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-4 flex items-center justify-between border-b" style={{ borderColor: C.border }}>
           <h3 className="font-bold tracking-tight" style={{ color: C.ink }}>Nuevo proyecto</h3>
           <button onClick={onClose} style={{ color: C.muted }}><X size={18} /></button>
@@ -620,24 +627,22 @@ function AddProject({ onClose, onAdd }) {
               {PILLAR_ORDER.map((k) => (
                 <button key={k} onClick={() => setPillar(k)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition"
                   style={pillar === k ? { background: PILLARS[k].soft, border: `1px solid ${PILLARS[k].color}`, color: C.ink } : { background: "#FFFFFF", border: `1px solid ${C.border}`, color: C.muted }}>
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ background: PILLARS[k].color }} />{PILLARS[k].label}
+                  <span className="rounded-full" style={{ width: 10, height: 10, background: PILLARS[k].color }} />{PILLARS[k].label}
                 </button>
               ))}
             </div>
           </Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Mes de arranque">
-              <select value={month} onChange={(e) => setMonth(+e.target.value)}
-                className="w-full rounded-lg px-3 py-2.5 text-sm outline-none" style={{ background: "#FFFFFF", border: `1px solid ${C.borderStrong}`, color: C.ink, colorScheme: "light" }}>
-                {MONTH_NAMES.map((m, i) => (
-                  <option key={m} value={i + 1}>{m}{i + 1 > COLS ? "  (→ extremo)" : ""}</option>
-                ))}
+            <Field label="Mes de inicio">
+              <select value={start} onChange={(e) => { const v = +e.target.value; setStart(v); if (end < v) setEnd(v); }}
+                className="w-full rounded-lg px-3 py-2.5 text-sm outline-none" style={selStyle}>
+                {MONTH_NAMES.map((m, i) => <option key={m} value={i + 1}>{m}{i + 1 > COLS ? "  (→ extremo)" : ""}</option>)}
               </select>
             </Field>
-            <Field label="Duración estimada">
-              <select value={plan} onChange={(e) => setPlan(+e.target.value)}
-                className="w-full rounded-lg px-3 py-2.5 text-sm outline-none" style={{ background: "#FFFFFF", border: `1px solid ${C.borderStrong}`, color: C.ink, colorScheme: "light" }}>
-                {PLAN_OPTIONS.map((m) => <option key={m} value={m}>{m} mes{m > 1 ? "es" : ""}</option>)}
+            <Field label="Mes de fin">
+              <select value={end} onChange={(e) => setEnd(+e.target.value)}
+                className="w-full rounded-lg px-3 py-2.5 text-sm outline-none" style={selStyle}>
+                {MONTH_NAMES.map((m, i) => <option key={m} value={i + 1} disabled={i + 1 < start}>{m}</option>)}
               </select>
             </Field>
           </div>
@@ -651,22 +656,15 @@ function AddProject({ onClose, onAdd }) {
                 className="w-full rounded-lg px-3 py-2.5 text-sm outline-none" style={{ background: "#FFFFFF", border: `1px solid ${C.borderStrong}`, color: C.ink }} />
             </Field>
           </div>
-          <div className="flex items-center gap-1.5 text-[11px] rounded-lg px-3 py-2" style={{ background: C.panel, color: C.muted }}>
-            <Clock size={13} /> Cierre previsto: <strong style={{ color: C.ink }}>{monthName(previewEnd)}</strong>.
-            {previewEnd < TODAY_MONTH && <span style={{ color: C.risk }}> Quedaría atrasado de inicio.</span>}
+          <div className="flex items-center gap-1.5 rounded-lg px-3 py-2" style={{ background: C.panel, color: C.muted, fontSize: 11 }}>
+            <Clock size={13} /> Se extenderá por <strong style={{ color: C.ink }}>&nbsp;{plan} mes{plan > 1 ? "es" : ""}</strong>&nbsp;({monthName(start)}–{monthName(end)}).
+            {end < TODAY_MONTH && <span style={{ color: C.risk }}>&nbsp;Quedaría atrasado de inicio.</span>}
           </div>
-          {month > COLS && (
-            <div className="flex items-center gap-1.5 text-[11px] rounded-lg px-3 py-2" style={{ background: C.panel, color: C.muted }}>
-              <ChevronsRight size={13} /> {monthName(month)} queda fuera de la escala: se mostrará anclado en Octubre.
-            </div>
-          )}
         </div>
         <div className="px-6 py-4 flex justify-end gap-2 border-t" style={{ borderColor: C.border }}>
           <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm font-semibold" style={{ background: C.panel, color: C.muted }}>Cancelar</button>
-          <button disabled={!ok} onClick={() => onAdd({ name: name.trim(), pillar, month, plan, responsable, tecnico })}
-            className="px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-30" style={{ background: C.ink }}>
-            Crear estación
-          </button>
+          <button disabled={!ok} onClick={() => onAdd({ name: name.trim(), pillar, month: start, plan, responsable, tecnico })}
+            className="px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-30" style={{ background: C.ink }}>Crear barra</button>
         </div>
       </div>
     </div>
@@ -676,7 +674,7 @@ function AddProject({ onClose, onAdd }) {
 function Field({ label, children }) {
   return (
     <label className="block">
-      <span className="text-[10px] uppercase tracking-[.14em] mb-1.5 block" style={{ color: C.faint }}>{label}</span>
+      <span className="uppercase mb-1.5 block" style={{ color: C.faint, fontSize: 10, letterSpacing: ".14em" }}>{label}</span>
       {children}
     </label>
   );
