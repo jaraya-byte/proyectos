@@ -3,17 +3,18 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("POSTGRES_PRISMA_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
 }
 
 model Project {
   id          String   @id @default(cuid())
-  pillar      String                       // ingresos | eficiencia | procesos | talento
+  pillar      String
   name        String
-  month       Int                          // 1..8 (mes de arranque)
-  plan        Int      @default(2)          // duracion planificada en meses
-  done        Int      @default(0)          // etapas completadas (0..6)
+  month       Int
+  plan        Int      @default(2)
+  done        Int      @default(0)
   responsable String   @default("Sin asignar")
   tecnico     String   @default("")
   createdAt   DateTime @default(now())
