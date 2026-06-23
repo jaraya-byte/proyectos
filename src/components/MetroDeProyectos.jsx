@@ -5,7 +5,7 @@ import { signOut } from "next-auth/react";
 import {
   TrendingUp, Zap, Cog, Users, Shield, Upload, Eye, Plus, X, Check,
   Search, Trash2, AlertTriangle, Train, ChevronRight, ChevronsRight,
-  Circle, Clock, UserCog, Archive, LogOut, Loader2,
+  Circle, Clock, UserCog, Archive, LogOut, Loader2, ClipboardList,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ *
@@ -73,7 +73,24 @@ function packLanes(items) {
   return lanes;
 }
 
-const normalize = (p) => ({ plan: DEFAULT_PLAN, tecnico: "", responsable: "Sin asignar", ...p });
+const MESES_ABBR = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+function weekStartLabel(ts = Date.now()) {
+  const d = new Date(ts);
+  const day = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - day);
+  return `${d.getDate()} ${MESES_ABBR[d.getMonth()]}`;
+}
+function fmtDate(ts) {
+  const d = new Date(ts);
+  const p2 = (n) => String(n).padStart(2, "0");
+  return `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+const normalize = (p) => {
+  const o = { plan: DEFAULT_PLAN, tecnico: "", responsable: "Sin asignar", updates: [], ...p };
+  if (!Array.isArray(o.updates)) o.updates = [];
+  return o;
+};
 
 const ROLES = {
   admin:        { label: "Administrador", Icon: Shield, desc: "Crea, edita fechas y elimina" },
@@ -153,6 +170,20 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
     setProjects((ps) => ps.filter((p) => p.id !== id));
     setSelected(null);
     try { await api(`/api/projects/${id}`, { method: "DELETE" }); } catch { reload(); }
+  }, [reload]);
+
+  const addUpdate = useCallback(async (id, text) => {
+    try {
+      const updated = await api(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify({ addUpdate: { text } }) });
+      setProjects((ps) => ps.map((p) => (p.id === id ? normalize(updated) : p)));
+    } catch { reload(); }
+  }, [reload]);
+
+  const removeUpdate = useCallback(async (id, updateId) => {
+    try {
+      const updated = await api(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify({ removeUpdate: updateId }) });
+      setProjects((ps) => ps.map((p) => (p.id === id ? normalize(updated) : p)));
+    } catch { reload(); }
   }, [reload]);
 
   const filtered = useMemo(() => projects.filter((p) => {
@@ -398,7 +429,8 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
       {selProject && (
         <ProjectDetail project={selProject} meta={PILLARS[selProject.pillar]} canEdit={canEditStages} canManage={canManage}
           onClose={() => setSelected(null)} onSetDone={(d) => setDone(selProject.id, d)}
-          onUpdate={(patch) => updateProject(selProject.id, patch)} onDelete={() => removeProject(selProject.id)} />
+          onUpdate={(patch) => updateProject(selProject.id, patch)} onDelete={() => removeProject(selProject.id)}
+          onAddUpdate={(text) => addUpdate(selProject.id, text)} onRemoveUpdate={(uid) => removeUpdate(selProject.id, uid)} />
       )}
       {showAdd && canManage && (
         <AddProject onClose={() => setShowAdd(false)} onAdd={(d) => { addProject(d); setShowAdd(false); }} />
@@ -461,7 +493,9 @@ function GanttBar({ project, meta, gridColumn, onClick }) {
   );
 }
 
-function ProjectDetail({ project, meta, canEdit, canManage, onClose, onSetDone, onUpdate, onDelete }) {
+function ProjectDetail({ project, meta, canEdit, canManage, onClose, onSetDone, onUpdate, onDelete, onAddUpdate, onRemoveUpdate }) {
+  const [draft, setDraft] = useState("");
+  const updates = [...(project.updates || [])].sort((a, b) => b.ts - a.ts);
   const done = project.done;
   const p = pct(done);
   const complete = isComplete(project);
@@ -576,6 +610,46 @@ function ProjectDetail({ project, meta, canEdit, canManage, onClose, onSetDone, 
                 );
               })}
             </div>
+          </div>
+
+          {/* Avance semanal */}
+          <div className="mt-6 pt-5 border-t" style={{ borderColor: C.border }}>
+            <div className="uppercase mb-3 flex items-center gap-1.5" style={{ color: C.faint, fontSize: 10, letterSpacing: ".18em" }}>
+              <ClipboardList size={12} /> Avance semanal
+            </div>
+            {updates.length === 0 ? (
+              <div className="text-xs mb-3" style={{ color: C.faint }}>Aún no hay avances registrados.</div>
+            ) : (
+              <div className="flex flex-col gap-2 mb-3">
+                {updates.map((u) => (
+                  <div key={u.id} className="rounded-lg p-3" style={{ background: C.panel, border: `1px solid ${C.border}` }}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold" style={{ color: C.ink }}>Semana del {u.week}</span>
+                      <span style={{ color: C.faint, fontSize: 10 }}>· {u.author}</span>
+                      <span className="ml-auto" style={{ color: C.faint, fontSize: 10 }}>{fmtDate(u.ts)}</span>
+                      {canManage && (
+                        <button onClick={() => onRemoveUpdate(u.id)} title="Eliminar avance" style={{ color: C.faint }}><X size={13} /></button>
+                      )}
+                    </div>
+                    <div className="text-sm mt-1" style={{ color: C.muted, whiteSpace: "pre-wrap" }}>{u.text}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {canEdit ? (
+              <div className="rounded-lg p-3" style={{ border: `1px dashed ${C.borderStrong}` }}>
+                <div className="uppercase mb-1.5" style={{ color: C.faint, fontSize: 10, letterSpacing: ".14em" }}>Nuevo avance · Semana del {weekStartLabel()}</div>
+                <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} placeholder="Describe el avance de esta semana…"
+                  className="w-full rounded-lg px-2.5 py-2 text-sm outline-none" style={{ background: "#FFFFFF", border: `1px solid ${C.borderStrong}`, color: C.ink, resize: "none" }} />
+                <div className="flex items-center justify-between mt-2 gap-2">
+                  <span style={{ color: C.faint, fontSize: 10 }}>A nombre de: {project.tecnico || "responsable técnico"}</span>
+                  <button disabled={!draft.trim()} onClick={() => { onAddUpdate(draft.trim()); setDraft(""); }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold text-white disabled:opacity-30" style={{ background: meta.color }}>Agregar avance</button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs" style={{ color: C.faint }}>Solo el responsable asignado o el equipo de carga puede registrar avances.</div>
+            )}
           </div>
 
           <div className="flex items-center justify-between mt-6 pt-5 border-t flex-wrap gap-3" style={{ borderColor: C.border }}>
