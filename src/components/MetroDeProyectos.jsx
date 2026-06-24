@@ -5,7 +5,7 @@ import { signOut } from "next-auth/react";
 import {
   TrendingUp, Zap, Cog, Users, Shield, Upload, Eye, Plus, X, Check,
   Search, Trash2, AlertTriangle, Train, ChevronRight, ChevronsRight,
-  Circle, Clock, UserCog, Archive, LogOut, Loader2, ClipboardList,
+  Circle, Clock, UserCog, Archive, LogOut, Loader2, ClipboardList, LayoutGrid,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ *
@@ -130,6 +130,7 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
   const [query, setQuery] = useState("");
   const [pillarFilter, setPillarFilter] = useState("todos");
   const [showAdd, setShowAdd] = useState(false);
+  const [view, setView] = useState("timeline");
 
   const canEditStages = role === "admin" || role === "carga";
   const canManage = role === "admin";
@@ -284,6 +285,16 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
               <Kpi label="Culminados" value={kpi.completados} accent={C.done} />
             </section>
 
+            {/* Tabs */}
+            <div className="flex items-center gap-1 rounded-xl p-1 mb-5" style={{ background: "#EEF1F6", width: "fit-content" }}>
+              <button onClick={() => setView("timeline")} className="px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                style={view === "timeline" ? { background: "#FFFFFF", color: C.ink, boxShadow: "0 1px 2px rgba(16,24,40,.1)" } : { color: C.muted }}>Línea de tiempo</button>
+              {canManage && (
+                <button onClick={() => setView("matrix")} className="px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5"
+                  style={view === "matrix" ? { background: "#FFFFFF", color: C.ink, boxShadow: "0 1px 2px rgba(16,24,40,.1)" } : { color: C.muted }}><LayoutGrid size={13} /> Matriz de responsables</button>
+              )}
+            </div>
+
             {/* Toolbar */}
             <div className="flex items-center gap-3 mb-5 flex-wrap">
               <div className="flex items-center gap-2 px-3 py-2 rounded-xl flex-1" style={{ background: "#FFFFFF", border: `1px solid ${C.border}`, minWidth: 200 }}>
@@ -304,6 +315,10 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
               )}
             </div>
 
+            {view === "matrix" && canManage ? (
+              <ResponsablesMatrix projects={filtered.filter((p) => !isComplete(p))} onSelect={setSelected} />
+            ) : (
+              <>
             {/* Timeline */}
             <section className="rounded-2xl overflow-hidden" style={{ background: "#FFFFFF", border: `1px solid ${C.border}`, boxShadow: "0 1px 3px rgba(16,24,40,.04)" }}>
               <div className="flex border-b" style={{ borderColor: C.border, background: C.panel }}>
@@ -422,6 +437,8 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
                 </ul>
               )}
             </section>
+              </>
+            )}
           </>
         )}
       </main>
@@ -440,6 +457,90 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
 }
 
 /* --------------------------- components ---------------------------- */
+function ResponsablesMatrix({ projects, onSelect }) {
+  const map = new Map();
+  for (const p of projects) {
+    const key = (p.tecnico || "").trim() || "Sin asignar";
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(p);
+  }
+  const rows = [...map.entries()].map(([person, list]) => {
+    const total = list.length;
+    const atrasados = list.filter(isLate).length;
+    const avance = Math.round(list.reduce((a, p) => a + pct(p.done), 0) / (total || 1));
+    const byPillar = {};
+    for (const pk of PILLAR_ORDER) byPillar[pk] = list.filter((p) => p.pillar === pk);
+    return { person, total, atrasados, avance, byPillar };
+  }).sort((a, b) => b.total - a.total || a.person.localeCompare(b.person));
+
+  const chip = (p) => {
+    const late = isLate(p);
+    return (
+      <button key={p.id} onClick={() => onSelect(p.id)} title={`${p.name} · ${pct(p.done)}%`}
+        className="w-full flex items-center gap-1 rounded-md px-1.5 py-1 text-left"
+        style={{ background: late ? C.riskBg : "#FFFFFF", border: `1px solid ${late ? "#FCA5A5" : C.border}`, borderLeft: `3px solid ${late ? C.risk : PILLARS[p.pillar].color}` }}>
+        <span className="font-semibold truncate" style={{ color: C.ink, fontSize: 11 }}>{p.name}</span>
+        {late && <Clock size={10} className="shrink-0" style={{ color: C.risk }} />}
+        <span className="ml-auto tabular-nums shrink-0" style={{ color: late ? C.risk : C.faint, fontSize: 9 }}>{late ? `+${extraTimePct(p)}%` : `${pct(p.done)}%`}</span>
+      </button>
+    );
+  };
+
+  return (
+    <section className="rounded-2xl overflow-hidden" style={{ background: "#FFFFFF", border: `1px solid ${C.border}`, boxShadow: "0 1px 3px rgba(16,24,40,.04)" }}>
+      <div className="flex items-center gap-2.5 px-5 py-3.5 border-b" style={{ borderColor: C.border, background: C.panel }}>
+        <span className="grid place-items-center w-8 h-8 rounded-lg" style={{ background: "#FFFFFF", color: C.ink, border: `1px solid ${C.border}` }}><LayoutGrid size={16} /></span>
+        <div>
+          <div className="text-sm font-bold tracking-tight" style={{ color: C.ink }}>Matriz de responsables</div>
+          <div className="uppercase" style={{ color: C.faint, fontSize: 10, letterSpacing: ".14em" }}>Proyectos activos por responsable técnico y pilar</div>
+        </div>
+        <span className="ml-auto text-xs font-semibold px-2.5 py-1 rounded-full" style={{ background: "#EEF1F6", color: C.muted }}>{rows.length} {rows.length === 1 ? "persona" : "personas"}</span>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="px-5 py-8 text-center text-sm" style={{ color: C.faint }}>No hay proyectos activos para mostrar.</div>
+      ) : (
+        <div className="overflow-x-auto mp-scroll">
+          <table className="w-full" style={{ borderCollapse: "collapse", minWidth: 760 }}>
+            <thead>
+              <tr>
+                <th className="text-left uppercase px-4 py-2.5" style={{ color: C.faint, fontSize: 10, letterSpacing: ".12em", background: C.panel, borderBottom: `1px solid ${C.border}` }}>Responsable</th>
+                {PILLAR_ORDER.map((pk) => (
+                  <th key={pk} className="text-left uppercase px-3 py-2.5" style={{ color: PILLARS[pk].color, fontSize: 10, letterSpacing: ".1em", background: C.panel, borderBottom: `1px solid ${C.border}`, minWidth: 150 }}>
+                    <span className="inline-flex items-center gap-1.5"><span className="rounded-full" style={{ width: 7, height: 7, background: PILLARS[pk].color }} />{PILLARS[pk].label}</span>
+                  </th>
+                ))}
+                <th className="text-center uppercase px-3 py-2.5" style={{ color: C.faint, fontSize: 10, letterSpacing: ".1em", background: C.panel, borderBottom: `1px solid ${C.border}` }}>Carga</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.person}>
+                  <td className="px-4 py-3 align-top" style={{ borderBottom: `1px solid ${C.border}`, background: "#FFFFFF", minWidth: 170 }}>
+                    <div className="text-sm font-semibold" style={{ color: r.person === "Sin asignar" ? C.faint : C.ink }}>{r.person}</div>
+                    <div className="mt-0.5" style={{ color: C.faint, fontSize: 10 }}>Avance {r.avance}%{r.atrasados > 0 && <span style={{ color: C.risk }}> · {r.atrasados} atrasado{r.atrasados > 1 ? "s" : ""}</span>}</div>
+                  </td>
+                  {PILLAR_ORDER.map((pk) => (
+                    <td key={pk} className="px-3 py-3 align-top" style={{ borderBottom: `1px solid ${C.border}`, borderLeft: `1px dashed ${C.border}` }}>
+                      <div className="flex flex-col gap-1.5">
+                        {r.byPillar[pk].length === 0 ? <span style={{ color: C.faint, fontSize: 11 }}>—</span> : r.byPillar[pk].map(chip)}
+                      </div>
+                    </td>
+                  ))}
+                  <td className="px-3 py-3 text-center align-top" style={{ borderBottom: `1px solid ${C.border}`, borderLeft: `1px dashed ${C.border}` }}>
+                    <div className="text-lg font-bold" style={{ color: C.ink }}>{r.total}</div>
+                    {r.atrasados > 0 && <div className="font-semibold" style={{ color: C.risk, fontSize: 10 }}>{r.atrasados} atras.</div>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Kpi({ label, value, accent = C.muted, big, warn, sub }) {
   return (
     <div className="rounded-2xl px-4 py-3.5" style={{ background: warn ? C.riskBg : "#FFFFFF", border: `1px solid ${warn ? accent + "55" : C.border}` }}>
