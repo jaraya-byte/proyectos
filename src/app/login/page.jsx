@@ -23,7 +23,19 @@ function LoginInner() {
 
         {error && (
           <div className="text-xs rounded-lg px-3 py-2 mb-4 text-left" style={{ background: "#FEF2F2", color: "#DC2626", border: "1px solid #FCA5A5" }}>
-            Tu cuenta no tiene acceso. Usa un correo de un dominio autorizado de la organización.
+            {error === "Configuration" ? (
+              <span>
+                <strong>Error de configuración:</strong> Faltan credenciales de Google OAuth (<code>GOOGLE_CLIENT_ID</code> / <code>GOOGLE_CLIENT_SECRET</code>) o <code>NEXTAUTH_SECRET</code> en las variables de entorno de tu servidor o archivo <code>.env</code>.
+              </span>
+            ) : error === "AccessDenied" ? (
+              <span>
+                Tu cuenta no tiene acceso. Usa un correo de un dominio autorizado de la organización (ej: <code>mayoreo.biz</code>).
+              </span>
+            ) : (
+              <span>
+                Error al iniciar sesión ({error}). Por favor, verifica tus credenciales o intenta de nuevo.
+              </span>
+            )}
           </div>
         )}
 

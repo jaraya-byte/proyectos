@@ -22,10 +22,24 @@ function weekStartLabel(ts = Date.now()) {
 
 export async function PATCH(req, { params }) {
   let role = "admin";
+  let hasWritePermission = true;
+  let hasDeletePermission = true;
+
   if (!AUTH_DISABLED) {
     const session = await getServerSession(authOptions);
-    role = session?.user?.role;
-    if (role !== "admin" && role !== "carga")
+    if (!session) return new NextResponse("No autorizado", { status: 401 });
+
+    role = session.user.role;
+    hasWritePermission =
+      session.user.permissions?.some((p) => p.modulo === "projects" && p.permissionType === "write") ||
+      role === "admin" ||
+      role === "carga";
+
+    hasDeletePermission =
+      session.user.permissions?.some((p) => p.modulo === "projects" && p.permissionType === "delete") ||
+      role === "admin";
+
+    if (!hasWritePermission)
       return new NextResponse("Sin permiso para editar", { status: 403 });
   }
 
@@ -42,7 +56,7 @@ export async function PATCH(req, { params }) {
       updates = [...updates, { id: `u${Date.now()}`, ts: Date.now(), week: weekStartLabel(), author: existing.tecnico || "—", text }];
     }
     if (b.removeUpdate) {
-      if (role !== "admin") return new NextResponse("Solo administradores eliminan avances", { status: 403 });
+      if (!hasDeletePermission) return new NextResponse("Solo administradores eliminan avances", { status: 403 });
       updates = updates.filter((u) => u.id !== b.removeUpdate);
     }
     const updated = await prisma.project.update({ where: { id: params.id }, data: { updates } });
@@ -76,7 +90,13 @@ export async function PATCH(req, { params }) {
 export async function DELETE(_req, { params }) {
   if (!AUTH_DISABLED) {
     const session = await getServerSession(authOptions);
-    if (session?.user?.role !== "admin")
+    if (!session) return new NextResponse("No autorizado", { status: 401 });
+
+    const hasDeletePermission =
+      session.user.permissions?.some((p) => p.modulo === "projects" && p.permissionType === "delete") ||
+      session.user.role === "admin";
+
+    if (!hasDeletePermission)
       return new NextResponse("Solo los administradores pueden eliminar", { status: 403 });
   }
   try {

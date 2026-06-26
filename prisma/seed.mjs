@@ -27,15 +27,38 @@ const SEED = [
 ];
 
 async function main() {
+  // 1. Sembrar proyectos
   const count = await prisma.project.count();
-  if (count > 0) {
-    console.log(`La base ya tiene ${count} proyectos. Semilla omitida.`);
-    return;
+  if (count === 0) {
+    for (const [pillar, name, month, responsable, done, plan, tecnico] of SEED) {
+      await prisma.project.create({ data: { pillar, name, month, responsable, done, plan, tecnico } });
+    }
+    console.log(`Semilla cargada: ${SEED.length} proyectos.`);
+  } else {
+    console.log(`La base ya tiene ${count} proyectos. Semilla de proyectos omitida.`);
   }
-  for (const [pillar, name, month, responsable, done, plan, tecnico] of SEED) {
-    await prisma.project.create({ data: { pillar, name, month, responsable, done, plan, tecnico } });
+
+  // 2. Sembrar permisos por defecto
+  const permissionsCount = await prisma.modulePermission.count();
+  if (permissionsCount === 0) {
+    const defaultPermissions = [
+      // admin
+      { role: "admin", modulo: "projects", permissionType: "read" },
+      { role: "admin", modulo: "projects", permissionType: "write" },
+      { role: "admin", modulo: "projects", permissionType: "delete" },
+      // carga
+      { role: "carga", modulo: "projects", permissionType: "read" },
+      { role: "carga", modulo: "projects", permissionType: "write" },
+      // visualizador
+      { role: "visualizador", modulo: "projects", permissionType: "read" },
+    ];
+    for (const p of defaultPermissions) {
+      await prisma.modulePermission.create({ data: p });
+    }
+    console.log("Permisos de módulo sembrados con éxito.");
+  } else {
+    console.log(`La base ya tiene ${permissionsCount} permisos de módulo. Semilla de permisos omitida.`);
   }
-  console.log(`Semilla cargada: ${SEED.length} proyectos.`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); }).finally(() => prisma.$disconnect());

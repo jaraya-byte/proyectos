@@ -16,6 +16,12 @@ export async function GET() {
   if (!AUTH_DISABLED) {
     const session = await getServerSession(authOptions);
     if (!session) return new NextResponse("No autorizado", { status: 401 });
+
+    const hasPermission =
+      session.user.permissions?.some((p) => p.modulo === "projects" && p.permissionType === "read") ||
+      session.user.role === "admin";
+
+    if (!hasPermission) return new NextResponse("Sin permiso para leer", { status: 403 });
   }
   const projects = await prisma.project.findMany({ orderBy: { createdAt: "asc" } });
   return NextResponse.json(projects);
@@ -24,8 +30,14 @@ export async function GET() {
 export async function POST(req) {
   if (!AUTH_DISABLED) {
     const session = await getServerSession(authOptions);
-    if (session?.user?.role !== "admin")
-      return new NextResponse("Solo los administradores pueden crear proyectos", { status: 403 });
+    if (!session) return new NextResponse("No autorizado", { status: 401 });
+
+    const hasPermission =
+      session.user.permissions?.some((p) => p.modulo === "projects" && p.permissionType === "write") ||
+      session.user.role === "admin";
+
+    if (!hasPermission)
+      return new NextResponse("Solo los usuarios autorizados pueden crear proyectos", { status: 403 });
   }
 
   const b = await req.json().catch(() => ({}));

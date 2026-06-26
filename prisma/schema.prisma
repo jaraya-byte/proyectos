@@ -8,6 +8,51 @@ datasource db {
   directUrl = env("POSTGRES_URL_NON_POOLING")
 }
 
+enum Role {
+  admin
+  carga
+  visualizador
+}
+
+enum PermissionType {
+  read
+  write
+  delete
+}
+
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  name      String?
+  image     String?
+  roles     UserRole[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("users")
+}
+
+model UserRole {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role
+  createdAt DateTime @default(now())
+
+  @@unique([userId, role])
+  @@map("user_roles")
+}
+
+model ModulePermission {
+  id             String         @id @default(cuid())
+  role           Role
+  modulo         String
+  permissionType PermissionType @map("permission_type")
+
+  @@unique([role, modulo, permissionType])
+  @@map("module_permissions")
+}
+
 model Project {
   id          String   @id @default(cuid())
   pillar      String
