@@ -28,7 +28,7 @@ export function roleFor(email) {
   const e = (email || "").toLowerCase();
   if (ADMIN_EMAILS.includes(e)) return "admin";
   if (EDITOR_EMAILS.includes(e)) return "carga";
-  return "visualizador";
+  return "carga"; // Por defecto, otorgar permisos de escritura/carga para registro de avances
 }
 
 export function isAllowed(email) {

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { signOut } from "next-auth/react";
+import UserManagement from "./UserManagement";
 import {
   TrendingUp, Zap, Cog, Users, Shield, Upload, Eye, Plus, X, Check,
   Search, Trash2, AlertTriangle, Train, ChevronRight, ChevronsRight,
@@ -293,29 +294,37 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
                 <button onClick={() => setView("matrix")} className="px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5"
                   style={view === "matrix" ? { background: "#FFFFFF", color: C.ink, boxShadow: "0 1px 2px rgba(16,24,40,.1)" } : { color: C.muted }}><LayoutGrid size={13} /> Matriz de responsables</button>
               )}
-            </div>
-
-            {/* Toolbar */}
-            <div className="flex items-center gap-3 mb-5 flex-wrap">
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl flex-1" style={{ background: "#FFFFFF", border: `1px solid ${C.border}`, minWidth: 200 }}>
-                <Search size={15} style={{ color: C.faint }} />
-                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar proyecto…"
-                  className="bg-transparent outline-none text-sm w-full" style={{ color: C.ink }} />
-              </div>
-              <div className="flex items-center gap-1 rounded-xl p-1" style={{ background: "#EEF1F6" }}>
-                <FilterChip active={pillarFilter === "todos"} onClick={() => setPillarFilter("todos")} color={C.faint}>Todas</FilterChip>
-                {PILLAR_ORDER.map((k) => (
-                  <FilterChip key={k} active={pillarFilter === k} onClick={() => setPillarFilter(k)} color={PILLARS[k].color}>{PILLARS[k].label}</FilterChip>
-                ))}
-              </div>
               {canManage && (
-                <button onClick={() => setShowAdd(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold text-white" style={{ background: C.ink }}>
-                  <Plus size={16} /> Nuevo proyecto
-                </button>
+                <button onClick={() => setView("users")} className="px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5"
+                  style={view === "users" ? { background: "#FFFFFF", color: C.ink, boxShadow: "0 1px 2px rgba(16,24,40,.1)" } : { color: C.muted }}><UserCog size={13} /> Usuarios y Permisos</button>
               )}
             </div>
 
-            {view === "matrix" && canManage ? (
+            {/* Toolbar */}
+            {view !== "users" && (
+              <div className="flex items-center gap-3 mb-5 flex-wrap">
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl flex-1" style={{ background: "#FFFFFF", border: `1px solid ${C.border}`, minWidth: 200 }}>
+                  <Search size={15} style={{ color: C.faint }} />
+                  <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar proyecto…"
+                    className="bg-transparent outline-none text-sm w-full" style={{ color: C.ink }} />
+                </div>
+                <div className="flex items-center gap-1 rounded-xl p-1" style={{ background: "#EEF1F6" }}>
+                  <FilterChip active={pillarFilter === "todos"} onClick={() => setPillarFilter("todos")} color={C.faint}>Todas</FilterChip>
+                  {PILLAR_ORDER.map((k) => (
+                    <FilterChip key={k} active={pillarFilter === k} onClick={() => setPillarFilter(k)} color={PILLARS[k].color}>{PILLARS[k].label}</FilterChip>
+                  ))}
+                </div>
+                {canManage && (
+                  <button onClick={() => setShowAdd(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold text-white" style={{ background: C.ink }}>
+                    <Plus size={16} /> Nuevo proyecto
+                  </button>
+                )}
+              </div>
+            )}
+
+            {view === "users" && canManage ? (
+              <UserManagement />
+            ) : view === "matrix" && canManage ? (
               <ResponsablesMatrix projects={filtered.filter((p) => !isComplete(p))} onSelect={setSelected} />
             ) : (
               <>
