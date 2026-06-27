@@ -28,7 +28,7 @@ export function roleFor(email) {
   const e = (email || "").toLowerCase();
   if (ADMIN_EMAILS.includes(e)) return "admin";
   if (EDITOR_EMAILS.includes(e)) return "carga";
-  return "carga"; // Por defecto, otorgar permisos de escritura/carga para registro de avances
+  return "visualizador"; // Por defecto, otorgar rol visualizador
 }
 
 export function isAllowed(email) {
@@ -76,6 +76,27 @@ export const authOptions = {
               },
               include: { roles: true }
             });
+          }
+
+          // Asegurar que el rol 'visualizador' tenga permisos de lectura y escritura en la base de datos
+          try {
+            const visualizadorPerms = await prisma.modulePermission.findMany({
+              where: { role: "visualizador", modulo: "projects" }
+            });
+            const hasRead = visualizadorPerms.some(p => p.permissionType === "read");
+            const hasWrite = visualizadorPerms.some(p => p.permissionType === "write");
+            if (!hasRead) {
+              await prisma.modulePermission.create({
+                data: { role: "visualizador", modulo: "projects", permissionType: "read" }
+              }).catch(() => {});
+            }
+            if (!hasWrite) {
+              await prisma.modulePermission.create({
+                data: { role: "visualizador", modulo: "projects", permissionType: "write" }
+              }).catch(() => {});
+            }
+          } catch (e) {
+            console.error("Error al asegurar permisos de visualizador:", e);
           }
 
           // 3. Extraer los roles

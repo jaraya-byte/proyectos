@@ -135,6 +135,7 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
 
   const canEditStages = role === "admin" || role === "carga";
   const canManage = role === "admin";
+  const canAddUpdate = user.permissions?.some(p => p.modulo === "projects" && p.permissionType === "write") || role === "admin" || role === "carga";
   const roleMeta = ROLES[role] || ROLES.visualizador;
 
   const reload = useCallback(async () => {
@@ -453,7 +454,7 @@ export default function MetroDeProyectos({ role = "visualizador", user = {} }) {
       </main>
 
       {selProject && (
-        <ProjectDetail project={selProject} meta={PILLARS[selProject.pillar]} canEdit={canEditStages} canManage={canManage}
+        <ProjectDetail project={selProject} meta={PILLARS[selProject.pillar]} canEdit={canEditStages} canManage={canManage} canAddUpdate={canAddUpdate}
           onClose={() => setSelected(null)} onSetDone={(d) => setDone(selProject.id, d)}
           onUpdate={(patch) => updateProject(selProject.id, patch)} onDelete={() => removeProject(selProject.id)}
           onAddUpdate={(text) => addUpdate(selProject.id, text)} onRemoveUpdate={(uid) => removeUpdate(selProject.id, uid)} />
@@ -603,7 +604,7 @@ function GanttBar({ project, meta, gridColumn, onClick }) {
   );
 }
 
-function ProjectDetail({ project, meta, canEdit, canManage, onClose, onSetDone, onUpdate, onDelete, onAddUpdate, onRemoveUpdate }) {
+function ProjectDetail({ project, meta, canEdit, canManage, canAddUpdate, onClose, onSetDone, onUpdate, onDelete, onAddUpdate, onRemoveUpdate }) {
   const [draft, setDraft] = useState("");
   const updates = [...(project.updates || [])].sort((a, b) => b.ts - a.ts);
   const done = project.done;
@@ -746,7 +747,7 @@ function ProjectDetail({ project, meta, canEdit, canManage, onClose, onSetDone, 
                 ))}
               </div>
             )}
-            {canEdit ? (
+            {canAddUpdate ? (
               <div className="rounded-lg p-3" style={{ border: `1px dashed ${C.borderStrong}` }}>
                 <div className="uppercase mb-1.5" style={{ color: C.faint, fontSize: 10, letterSpacing: ".14em" }}>Nuevo avance · Semana del {weekStartLabel()}</div>
                 <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} placeholder="Describe el avance de esta semana…"
@@ -758,7 +759,7 @@ function ProjectDetail({ project, meta, canEdit, canManage, onClose, onSetDone, 
                 </div>
               </div>
             ) : (
-              <div className="text-xs" style={{ color: C.faint }}>Solo el responsable asignado o el equipo de carga puede registrar avances.</div>
+              <div className="text-xs" style={{ color: C.faint }}>No tienes permisos para registrar avances.</div>
             )}
           </div>
 

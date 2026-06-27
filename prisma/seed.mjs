@@ -51,6 +51,7 @@ async function main() {
       { role: "carga", modulo: "projects", permissionType: "write" },
       // visualizador
       { role: "visualizador", modulo: "projects", permissionType: "read" },
+      { role: "visualizador", modulo: "projects", permissionType: "write" },
     ];
     for (const p of defaultPermissions) {
       await prisma.modulePermission.create({ data: p });

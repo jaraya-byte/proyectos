@@ -21,6 +21,7 @@ export default async function Home() {
         name: session.user.name,
         email: session.user.email,
         image: session.user.image,
+        permissions: session.user.permissions,
       }}
     />
   );

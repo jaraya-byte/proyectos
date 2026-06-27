@@ -65,8 +65,16 @@ export async function PATCH(req, { params }) {
 
   const data = {};
 
-  if (b.done !== undefined) data.done = clampInt(b.done, 0, 6, 0);
-  if (b.tecnico !== undefined) data.tecnico = String(b.tecnico);
+  const canEditStages = role === "admin" || role === "carga";
+
+  if (b.done !== undefined) {
+    if (!canEditStages) return new NextResponse("Sin permiso para editar etapas", { status: 403 });
+    data.done = clampInt(b.done, 0, 6, 0);
+  }
+  if (b.tecnico !== undefined) {
+    if (!canEditStages) return new NextResponse("Sin permiso para editar técnico", { status: 403 });
+    data.tecnico = String(b.tecnico);
+  }
 
   if (role === "admin") {
     if (b.plan !== undefined) data.plan = clampInt(b.plan, 1, 6, 2);
