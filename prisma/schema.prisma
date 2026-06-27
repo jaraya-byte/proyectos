@@ -62,6 +62,7 @@ model Project {
   done        Int      @default(0)
   responsable String   @default("Sin asignar")
   tecnico     String   @default("")
+  updates     Json     @default("[]")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
